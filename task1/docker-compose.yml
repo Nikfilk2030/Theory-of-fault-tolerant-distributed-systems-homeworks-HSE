@@ -1,5 +1,20 @@
-version: '3'
 services:
-  bebra:
+  client:
     build: .
-    command: ./bebra
+    command: ./client 0 50 0.001
+    depends_on:
+      - worker1
+      - worker2
+      - worker3
+
+  worker1:
+    build: .
+    command: ./worker 12345 12346
+
+  worker2:
+    build: .
+    command: ./worker 12345 12346
+
+  worker3:
+    build: .
+    command: ./worker 12345 12346

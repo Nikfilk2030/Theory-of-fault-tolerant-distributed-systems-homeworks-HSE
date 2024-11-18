@@ -4,6 +4,8 @@ project(task1)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_executable(bebra bebra.cpp)
+add_executable(client client.cpp)
+add_executable(worker worker.cpp)
 
-target_compile_options(bebra PRIVATE -Wall -Wextra)
+target_compile_options(client PRIVATE -Wall -Wextra)
+target_compile_options(worker PRIVATE -Wall -Wextra)
