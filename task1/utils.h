@@ -25,17 +25,22 @@ using ui64 = std::uint64_t;
 using ui32 = std::uint32_t;
 using i64 = std::int64_t;
 using i32 = std::int32_t;
+using TInstant = i32;
 
-void log(const TString& entity, const TString& msg) {
+using TMutex = std::mutex;
+
+#define TVector std::vector
+
+void Log(const TString& entity, const TString& msg) {
     std::cerr << "LOGGER: " << entity << ": " << msg << std::endl;
 }
 
-void log_client(const TString& msg) {
-    log("CLIENT", msg);
+void LogClient(const TString& msg) {
+    Log("CLIENT", msg);
 }
 
-void log_worker(const TString& msg) {
-    log("WORKER", msg);
+void LogWorker(const TString& msg) {
+    Log("WORKER", msg);
 }
 
 class TTask {
@@ -49,31 +54,31 @@ public:
 
     TTask() {}
 
-    double get_step() const {
+    double GetStep() const {
         return step_;
     }
 
-    double get_end() const {
+    double GetEnd() const {
         return end_;
     }
 
-    double get_start() const {
+    double GetStart() const {
         return start_;
     }
 
-    void set_step(double step) {
+    void SetStep(double step) {
         this->step_ = step;
     }
 
-    void set_end(double end) {
+    void SetEnd(double end) {
         this->end_ = end;
     }
 
-    void set_start(double start) {
+    void SetStart(double start) {
         this->start_ = start;
     }
 
-    TString as_string() const {
-        return std::to_string(start_) + " " + std::to_string(end_) + " " + std::to_string(step_);
+    TString AsString() const {
+        return "Task. start: " + std::to_string(start_) + ", end: " + std::to_string(end_) + ", step: " + std::to_string(step_);
     }
 };
