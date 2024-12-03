@@ -1,0 +1,20 @@
+services:
+  client:
+    build: .
+    command: ./client 0 50 0.001 228 1337 2
+    depends_on:
+      - worker1
+      - worker2
+      - worker3
+
+  worker1:
+    build: .
+    command: ./worker 228 1337
+
+  worker2:
+    build: .
+    command: ./worker 228 1337
+
+  worker3:
+    build: .
+    command: ./worker 228 1337
