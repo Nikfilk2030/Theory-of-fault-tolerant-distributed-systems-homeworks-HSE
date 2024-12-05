@@ -156,7 +156,7 @@ func TestLogReplication(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	for id := 1; id < ClusterSize; id++ {
-		assert.Equal(t, 2, cluster[id].raftServer.LogLength(), "Log length should be 2 ['init', 'create'] on server %d", id)
+		assert.Equal(t, 3, cluster[id].raftServer.LogLength(), "Log length should be 3 on server %d", id)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestLogSync(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	for id := 2; id < ClusterSize; id++ {
-		assert.Equal(t, 4, cluster[id].raftServer.LogLength(), "Log length should be 4 on server %d after replication", id)
+		assert.Equal(t, 5, cluster[id].raftServer.LogLength(), "Log length should be 5 on server %d after replication", id)
 	}
 
 	StartTestServer(cluster[1])

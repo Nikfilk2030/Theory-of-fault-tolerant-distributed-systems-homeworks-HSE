@@ -17,7 +17,7 @@ func (s *RaftServer) beginElection() {
 	s.lastVotedFor = s.id
 	votesReceived := 1
 
-	s.electionTimer = s.Tick(s.electionTimer, s.electionTimeout, s.beginElection)
+	s.electionTimer = s.tick(s.electionTimer, s.electionTimeout, s.beginElection)
 
 	for _, peer := range s.peers {
 		go s.requestVoteFromPeer(peer, &votesReceived)
@@ -55,7 +55,7 @@ func (s *RaftServer) becomeLeader() {
 	s.state = LEADER
 	s.leaderID = s.id
 
-	s.heartbeatTimer = s.Tick(s.heartbeatTimer, s.heartbeatTimeout, s.sendHeartbeats)
+	s.heartbeatTimer = s.tick(s.heartbeatTimer, s.heartbeatTimeout, s.sendHeartbeats)
 
 	if s.electionTimer != nil {
 		s.electionTimer.Stop()

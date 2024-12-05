@@ -12,31 +12,44 @@ func (s *RaftServer) ReplicateLogEntry(command, key string, value, oldValue *str
 	defer s.mu.Unlock()
 
 	if s.state != LEADER {
-		slog.Error("WTF, replicate in replica", "leader", s.leaderID, "node", s.id)
-		return false, fmt.Errorf("cannot handle write on replica. LeaderID: %v", s.leaderID)
+		slog.Error("Attempt to replicate log entry on a replica", "leader", s.leaderID, "node", s.id)
+		return false, fmt.Errorf("cannot handle write on a replica. LeaderID: %v", s.leaderID)
 	}
 
-	var prevLogIndex int64
-	var prevLogTerm int64
+	newEntry, prevLogIndex, prevLogTerm := s.prepareLogEntry(command, key, value, oldValue)
+	s.log = append(s.log, newEntry)
+	slog.Info("Log entry appended by leader", "leader", s.id, "entry", newEntry)
 
-	prevLogIndex = int64(len(s.log) - 1)
-	if prevLogIndex >= 0 {
+	ackCount := s.replicateToPeers(newEntry, prevLogIndex, prevLogTerm)
+
+	if ackCount > len(s.peers)/2 {
+		slog.Info("Successfully replicated entry, applying...", "leader", s.id, "entry", newEntry)
+		success, err := db.ProcessWrite(newEntry.Command, newEntry.Key, newEntry.Value, newEntry.OldValue)
+		s.commitIndex = int64(len(s.log) - 1)
+		return success, err
+	}
+	return false, fmt.Errorf("cannot replicate entry %+v", newEntry)
+}
+
+func (s *RaftServer) prepareLogEntry(command, key string, value, oldValue *string) (LogEntry, int64, int64) {
+	var prevLogIndex, prevLogTerm int64
+	if len(s.log) > 0 {
+		prevLogIndex = int64(len(s.log) - 1)
 		prevLogTerm = s.log[prevLogIndex].Term
 	}
-	entry := LogEntry{
+	return LogEntry{
 		Term:     s.currentTerm,
 		Command:  command,
 		Key:      key,
 		Value:    value,
 		OldValue: oldValue,
-	}
+	}, prevLogIndex, prevLogTerm
+}
 
-	s.log = append(s.log, entry)
-	slog.Info("master append entry", "leader", s.id, "entry", entry)
-
+func (s *RaftServer) replicateToPeers(entry LogEntry, prevLogIndex, prevLogTerm int64) int {
 	ackCh := make(chan bool, len(s.peers))
-	for _, peer := range s.peers {
-		go func(peer string) {
+	for _, peerID := range s.peers {
+		go func(peerID string) {
 			req := &pb.AppendEntriesRequest{
 				Term:         s.currentTerm,
 				LeaderID:     s.id,
@@ -54,38 +67,26 @@ func (s *RaftServer) ReplicateLogEntry(command, key string, value, oldValue *str
 				LeaderCommit: s.commitIndex,
 			}
 
-			resp, err := sendAppendEntries(peer, req)
+			resp, err := sendAppendEntries(peerID, req)
 			if err == nil && resp.Success {
 				ackCh <- true
 				s.mu.Lock()
-				s.nextIndex[peer]++
+				s.nextIndex[peerID]++
 				s.mu.Unlock()
 			} else {
 				if err != nil {
-					slog.Error("Append new entry error", "leader", s.id, "error", err)
+					slog.Error("Error appending entry to peer", "leader", s.id, "peer", peerID, "error", err)
 				}
-
 				ackCh <- false
 			}
-		}(peer)
+		}(peerID)
 	}
 
-	ackCount := 1 // self ack
+	ackCount := 1 // само ак
 	for i := 0; i < len(s.peers); i++ {
 		if <-ackCh {
 			ackCount++
 		}
-		if ackCount > len(s.peers)/2 {
-			break
-		}
 	}
-
-	if ackCount > len(s.peers)/2 {
-		slog.Info("Successfully replicated entry, applying...", "leader", s.id, "entry", entry)
-		success, err := db.ProcessWrite(entry.Command, entry.Key, entry.Value, entry.OldValue)
-		s.commitIndex = int64(len(s.log) - 1)
-		return success, err
-	}
-
-	return false, fmt.Errorf("cannot replicate entry %+v", entry)
+	return ackCount
 }

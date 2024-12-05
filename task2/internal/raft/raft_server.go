@@ -68,16 +68,15 @@ func NewRaftServer(id int64, peers []string) *RaftServer {
 		peers: peers,
 	}
 
-	server.electionTimer = server.Tick(nil, server.electionTimeout, server.beginElection)
+	server.electionTimer = server.tick(nil, server.electionTimeout, server.beginElection)
 
 	return server
 }
 
-func (s *RaftServer) Tick(timer *time.Timer, timeout time.Duration, callback func()) *time.Timer {
+func (s *RaftServer) tick(timer *time.Timer, timeout time.Duration, callback func()) *time.Timer {
 	if timer != nil {
 		timer.Stop()
 	}
-
 	return time.AfterFunc(timeout, callback)
 }
 
@@ -88,7 +87,7 @@ func (s *RaftServer) RequestVote(ctx context.Context, req *pb.VoteRequest) (*pb.
 		return &pb.VoteResponse{Term: s.currentTerm, VoteGranted: false}, nil
 	}
 
-	if s.lastVotedFor == -1 || req.Term > s.currentTerm || s.lastVotedFor == int64(req.CandidateID) {
+	if s.canGrantVote(req) {
 		s.currentTerm = req.Term
 		s.lastVotedFor = req.CandidateID
 		return &pb.VoteResponse{Term: s.currentTerm, VoteGranted: true}, nil
@@ -97,27 +96,8 @@ func (s *RaftServer) RequestVote(ctx context.Context, req *pb.VoteRequest) (*pb.
 	return &pb.VoteResponse{Term: s.currentTerm, VoteGranted: false}, nil
 }
 
-func (s *RaftServer) appendEntries(req *pb.AppendEntriesRequest) {
-	for i, entry := range req.Entries {
-		logIndex := req.PrevLogIndex + int64(i) + 1
-
-		if logIndex < int64(len(s.log)) {
-			// conflict
-			if s.log[logIndex].Term != req.Term {
-				s.log = s.log[:logIndex]
-			} else {
-				continue
-			}
-		}
-
-		s.log = append(s.log, LogEntry{
-			Term:     entry.Term,
-			Command:  entry.Command,
-			Key:      entry.Key,
-			Value:    entry.Value,
-			OldValue: entry.OldValue,
-		})
-	}
+func (s *RaftServer) canGrantVote(req *pb.VoteRequest) bool {
+	return s.lastVotedFor == -1 || req.Term > s.currentTerm || s.lastVotedFor == int64(req.CandidateID)
 }
 
 func (s *RaftServer) AppendEntries(ctx context.Context, req *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
@@ -127,17 +107,10 @@ func (s *RaftServer) AppendEntries(ctx context.Context, req *pb.AppendEntriesReq
 		return &pb.AppendEntriesResponse{Term: s.currentTerm, Success: false}, nil
 	}
 
-	s.currentTerm = req.Term
-	s.lastVotedFor = -1
-	s.state = FOLLOWER
-	s.leaderID = req.LeaderID
-	s.electionTimer = s.Tick(s.electionTimer, s.electionTimeout, s.beginElection)
+	s.updateTermAndState(req)
 
-	if req.PrevLogIndex >= 0 {
-		if req.PrevLogIndex >= int64(len(s.log)) || s.log[req.PrevLogIndex].Term != req.PrevLogTerm {
-			// Not sync
-			return &pb.AppendEntriesResponse{Term: s.currentTerm, Success: false}, nil
-		}
+	if !s.isLogUpToDate(req) {
+		return &pb.AppendEntriesResponse{Term: s.currentTerm, Success: false}, nil
 	}
 
 	s.appendEntries(req)
@@ -149,20 +122,45 @@ func (s *RaftServer) AppendEntries(ctx context.Context, req *pb.AppendEntriesReq
 	return &pb.AppendEntriesResponse{Term: s.currentTerm, Success: true}, nil
 }
 
-// [start, end]
+func (s *RaftServer) updateTermAndState(req *pb.AppendEntriesRequest) {
+	s.currentTerm = req.Term
+	s.lastVotedFor = -1
+	s.state = FOLLOWER
+	s.leaderID = req.LeaderID
+	s.electionTimer = s.tick(s.electionTimer, s.electionTimeout, s.beginElection)
+}
+
+func (s *RaftServer) isLogUpToDate(req *pb.AppendEntriesRequest) bool {
+	return req.PrevLogIndex < 0 || (req.PrevLogIndex < int64(len(s.log)) && s.log[req.PrevLogIndex].Term == req.PrevLogTerm)
+}
+
+func (s *RaftServer) appendEntries(req *pb.AppendEntriesRequest) {
+	for i, entry := range req.Entries {
+		logIndex := req.PrevLogIndex + int64(i) + 1
+		if logIndex < int64(len(s.log)) && s.log[logIndex].Term != req.Term {
+			s.log = s.log[:logIndex] // remove conflict
+		}
+		s.log = append(s.log, LogEntry{
+			Term:     entry.Term,
+			Command:  entry.Command,
+			Key:      entry.Key,
+			Value:    entry.Value,
+			OldValue: entry.OldValue,
+		})
+	}
+}
+
 func (s *RaftServer) applyEntries(leaderCommit int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for i := s.commitIndex; i <= leaderCommit; i++ {
 		entry := s.log[i]
-		if entry.Command == "init" {
-			continue
+		if entry.Command != "init" {
+			slog.Info("applying entry", "node", s.id, "entry", entry)
+			db.ProcessWrite(entry.Command, entry.Key, entry.Value, entry.OldValue)
 		}
-		slog.Info("applying entry", "node", s.id, "entry", entry)
-		db.ProcessWrite(entry.Command, entry.Key, entry.Value, entry.OldValue)
 	}
-
 	s.commitIndex = leaderCommit
 }
 
@@ -188,13 +186,17 @@ func (s *RaftServer) GetLeaderID() int64 {
 }
 
 func (s *RaftServer) ResetTimeouts() {
-	s.electionTimer.Stop()
-	s.heartbeatTimer.Stop()
+	if s.electionTimer != nil {
+		s.electionTimer.Stop()
+	}
+	if s.heartbeatTimer != nil {
+		s.heartbeatTimer.Stop()
+	}
 }
 
 func (s *RaftServer) StartTimeouts() {
-	s.electionTimer = s.Tick(s.electionTimer, s.electionTimeout, s.beginElection)
-	s.heartbeatTimer = s.Tick(s.heartbeatTimer, s.heartbeatTimeout, s.sendHeartbeats)
+	s.electionTimer = s.tick(s.electionTimer, s.electionTimeout, s.beginElection)
+	s.heartbeatTimer = s.tick(s.heartbeatTimer, s.heartbeatTimeout, s.sendHeartbeats)
 }
 
 func (s *RaftServer) LogLength() int {

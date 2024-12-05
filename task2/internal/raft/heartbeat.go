@@ -17,7 +17,7 @@ func (s *RaftServer) sendHeartbeats() {
 		go s.sendHeartbeatToPeer(peer)
 	}
 
-	s.heartbeatTimer = s.Tick(s.heartbeatTimer, s.heartbeatTimeout, s.sendHeartbeats)
+	s.heartbeatTimer = s.tick(s.heartbeatTimer, s.heartbeatTimeout, s.sendHeartbeats)
 }
 
 func (s *RaftServer) sendHeartbeatToPeer(peer string) {

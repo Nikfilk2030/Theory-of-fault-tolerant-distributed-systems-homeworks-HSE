@@ -27,7 +27,7 @@ if ! docker compose ps; then
     exit 1
 fi
 
-sleep 40
+sleep 15
 
 log_message "LOGS"
 docker compose logs
